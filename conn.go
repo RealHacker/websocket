@@ -14,6 +14,7 @@ import (
 	"net"
 	"strconv"
 	"time"
+	"fmt"
 )
 
 const (
@@ -109,6 +110,17 @@ var (
 	errWriteClosed         = errors.New("websocket: write closed")
 	errInvalidControlFrame = errors.New("websocket: invalid control frame")
 )
+
+var LogOutput io.Writer
+
+func SetLogOutput(w io.Writer) {
+	LogOutput = w
+}
+
+func WriteToLog(msg string){
+	LogOutput.Write([]byte("+++++++++++++++++++++\n"))
+	LogOutput.Write([]byte(msg))
+}
 
 func hideTempErr(err error) error {
 	if e, ok := err.(net.Error); ok && e.Temporary() {
@@ -563,11 +575,13 @@ func (c *Conn) advanceFrame() (int, error) {
 			return noFrame, err
 		}
 	}
+	WriteToLog(fmt.Sprintf("readRemaining = %d", c.readRemaining))
 
 	// 2. Read and parse first two bytes of frame header.
 
 	var b [8]byte
 	if err := c.readFull(b[:2]); err != nil {
+		WriteToLog("Error reading first 2 bytes:"+err.Error())
 		return noFrame, err
 	}
 
@@ -584,6 +598,13 @@ func (c *Conn) advanceFrame() (int, error) {
 	switch frameType {
 	case CloseMessage, PingMessage, PongMessage:
 		if c.readRemaining > maxControlFramePayloadSize {
+
+			// Log the frame type and whole message
+			WriteToLog(fmt.Sprintf("Type of this message is: %d", frameType))
+			p := make([]byte, 1024)
+			c.readFull(p)
+			WriteToLog("WholeMessage:"+ string(p))
+
 			return noFrame, c.handleProtocolError("control frame length > 125")
 		}
 		if !final {
@@ -649,10 +670,12 @@ func (c *Conn) advanceFrame() (int, error) {
 	var payload []byte
 	if c.readRemaining > 0 {
 		payload = make([]byte, c.readRemaining)
+
 		c.readRemaining = 0
 		if err := c.readFull(payload); err != nil {
 			return noFrame, err
 		}
+		WriteToLog("Control frame payload:"+ string(payload))
 		if c.isServer {
 			maskBytes(c.readMaskKey, 0, payload)
 		}
@@ -732,6 +755,9 @@ func (r messageReader) Read(b []byte) (int, error) {
 				b = b[:r.c.readRemaining]
 			}
 			n, err := r.c.br.Read(b)
+
+			WriteToLog(fmt.Sprintf("Data frame (%d bytes) payload: %v", n, string(b)))
+
 			r.c.readErr = hideTempErr(err)
 			if r.c.isServer {
 				r.c.readMaskPos = maskBytes(r.c.readMaskKey, r.c.readMaskPos, b[:n])
